@@ -7,9 +7,9 @@ import win32 "core:sys/windows"
 
 application_running: bool
 bitmap_info: win32.BITMAPINFO
-bitmap_memory: [^]u8
-bitmap_handle: win32.HBITMAP
-bitmap_device_context: win32.HDC
+bitmap_memory: rawptr
+bitmap_width: i32
+bitmap_height: i32
 
 main :: proc() {
 	instance := cast(win32.HINSTANCE)win32.GetModuleHandleW(nil) // get instance to application process
@@ -94,7 +94,9 @@ win32_window_callback :: proc "stdcall" (
 		y := paint.rcPaint.top
 		width := paint.rcPaint.right - paint.rcPaint.left
 		height := paint.rcPaint.bottom - paint.rcPaint.top
-		win32_update_window(device_context, x, y, width, height)
+		client_rect: win32.RECT
+		win32.GetClientRect(window_handle, &client_rect)
+		win32_update_window(device_context, &client_rect, x, y, width, height)
 		win32.EndPaint(window_handle, &paint)
 		break
 
@@ -109,42 +111,54 @@ win32_window_callback :: proc "stdcall" (
 
 // Invoked every time window resizes.
 win32_resize_device_independent_bitmap_section :: proc(width, height: i32) {
+	if bitmap_memory != nil do win32.VirtualFree(bitmap_memory, 0, win32.MEM_RELEASE)
 
-	// Free the previous instance of the bitmap handle, if it exists.
-	if bitmap_handle != nil do win32.DeleteObject(cast(win32.HGDIOBJ)bitmap_handle)
-	// create bitmap device context if it doesn't exist yet.
-	if bitmap_device_context == nil do bitmap_device_context = win32.CreateCompatibleDC(nil)
+	bitmap_width = width
+	bitmap_height = height
 
 	bitmap_info.bmiHeader.biSize = size_of(bitmap_info)
-	bitmap_info.bmiHeader.biWidth = width
-	bitmap_info.bmiHeader.biHeight = height
+	bitmap_info.bmiHeader.biWidth = bitmap_width
+	bitmap_info.bmiHeader.biHeight = -bitmap_height // top to bottom
 	bitmap_info.bmiHeader.biPlanes = 1
-	bitmap_info.bmiHeader.biBitCount = 32
+	bitmap_info.bmiHeader.biBitCount = 32 // 8 bits per pixel (24) + padding
 	bitmap_info.bmiHeader.biCompression = win32.BI_RGB
 
-	bitmap_handle = win32.CreateDIBSection(
-		bitmap_device_context,
-		&bitmap_info,
-		win32.DIB_RGB_COLORS,
-		&bitmap_memory,
+	bytes_per_pixel: i32 = 4
+	bitmap_memory_size := (bitmap_width * bitmap_height) * bytes_per_pixel
+	bitmap_memory = win32.VirtualAlloc(
 		nil,
-		0,
+		uint(bitmap_memory_size),
+		win32.MEM_COMMIT,
+		win32.PAGE_READWRITE,
 	)
+
+	for y in 0 ..< bitmap_height {
+		for x in 0 ..< bitmap_width {
+
+		}
+	}
 }
 
 // Invoked every time window draws
-win32_update_window :: proc(device_context: win32.HDC, x, y, width, height: i32) {
+win32_update_window :: proc(
+	device_context: win32.HDC,
+	window_rect: ^win32.RECT,
+	x, y, width, height: i32,
+) {
+	window_width := window_rect.right - window_rect.left
+	window_height := window_rect.bottom - window_rect.top
+
 	// Basically rectangle to rectangle copy
 	win32.StretchDIBits(
 		device_context,
-		x,
-		y,
-		width,
-		height, // ^ dest rect
-		x,
-		y,
-		width,
-		height, // ^ source rect
+		0,
+		0,
+		bitmap_width,
+		bitmap_height, // ^ dest rect
+		0,
+		0,
+		window_width,
+		window_height, // ^ source rect
 		bitmap_memory,
 		&bitmap_info,
 		win32.DIB_RGB_COLORS,
