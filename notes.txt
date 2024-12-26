@@ -20,3 +20,43 @@ decimal = 237
 (1 * 2^7) + (1 * 2^6) + (1 * 2^5) + (0 * 2^4) + (1 * 2^3) + (1 * 2^2) + (0 * 2^1) + (1 * 2^0) 
     128    +    64     +    32	  +    0      +    8      +    4      +    0      +    1 
 = 237
+
+
+basic_bits_example :: proc() {
+	// A single pixel (32-bit unsigned integer)
+	pixel: u32 = 0
+
+	// Set individual color channels
+	red: u8 = 255 // Example: Red = 255 (0xFF in hex)
+	green: u8 = 0 // Green = 255 (0xFF in hex)
+	blue: u8 = 0 // Blue = 255 (0x00 in hex)
+
+	// Combine the channels into the pixel
+	pixel = (u32(red) << 16) | (u32(green) << 8) | u32(blue)
+
+	// Print the pixel in hexadecimal to visualize
+	fmt.printf("Combined Pixel (Hex): 0x%08X\n", pixel)
+
+	// Extract the individual channels back from the pixel
+	extracted_red: u8 = u8((pixel >> 16) & 0xFF)
+	extracted_green: u8 = u8((pixel >> 8) & 0xFF)
+	extracted_blue: u8 = u8(pixel & 0xFF)
+
+	// Print extracted values
+	fmt.printf("Extracted Red:   0x%02X\n", extracted_red)
+	fmt.printf("Extracted Green: 0x%02X\n", extracted_green)
+	fmt.printf("Extracted Blue:  0x%02X\n", extracted_blue)
+
+	// Debug: Visualize the bits of the pixel
+	fmt.println("Pixel Binary: ")
+	for i := 31; i >= 0; i -= 1 {
+		if (pixel >> u32(i)) & 1 != 0 {
+			fmt.print("1")
+		} else {
+			fmt.print("0")
+		}
+		if i % 8 == 0 {
+			fmt.print(" ") // Add spacing every 8 bits
+		}
+	}
+}
