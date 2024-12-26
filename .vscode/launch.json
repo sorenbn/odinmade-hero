@@ -8,7 +8,7 @@
             "program": "cmd.exe",
             "args": [
                 "/C",
-                "odin run . -out:build/dev/game-dev.exe"
+                "odin run . -out:build/dev/OdinmadeHero-dev.exe"
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
@@ -18,7 +18,7 @@
             "request": "launch",
             "preLaunchTask": "Build Debug",
             "name": "Debug",
-            "program": "${workspaceFolder}/build/debug/game-debug.exe",
+            "program": "${workspaceFolder}/build/debug/OdinmadeHero-debug.exe",
             "args": [],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"

@@ -24,7 +24,7 @@
         {
             "label": "build-debug",
             "type": "shell",
-            "command": "odin build . -debug -out:build/debug/game-debug.exe -show-timings",
+            "command": "odin build . -debug -out:build/debug/OdinmadeHero-debug.exe -show-timings",
             "group": "build"
         },
         {
@@ -41,7 +41,7 @@
         {
             "label": "build-release",
             "type": "shell",
-            "command": "odin build . -out:build/release/game-release.exe -show-timings",
+            "command": "odin build . -out:build/release/OdinmadeHero-release.exe -show-timings",
             "group": "build"
         },
         {

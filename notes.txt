@@ -1,0 +1,22 @@
+Notebook
+
+1 byte = 8 bits
+example: 0000 0000 (0)
+example: 1111 1111 (255)
+total range of possible values: 256
+
+Counting in binary example 1:
+binary  = 1101 
+decimal = 13
+
+(1 * 2^3) + (1 * 2^2) + (0 * 2^1) + (1 * 2^0)
+    8     +    4      +    0      +     1 
+= 13
+
+Counting in binary example 2:
+binary  = 1110 1101 
+decimal = 237
+
+(1 * 2^7) + (1 * 2^6) + (1 * 2^5) + (0 * 2^4) + (1 * 2^3) + (1 * 2^2) + (0 * 2^1) + (1 * 2^0) 
+    128    +    64     +    32	  +    0      +    8      +    4      +    0      +    1 
+= 237
