@@ -51,6 +51,17 @@
                 "build-release"
             ],
             "group": "build"
+        },
+        {
+            "label": "Attach RAD Debugger",
+            "type": "shell",
+            "command": "raddbg",
+            "args": [
+                "--build/debug/OdinmadeHero-debug.exe",
+                "--auto_run"
+            ],
+            "problemMatcher": [],
+            "dependsOn": "build-debug"
         }
     ]
 }
