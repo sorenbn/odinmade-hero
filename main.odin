@@ -7,6 +7,7 @@ import "core:math/rand"
 import "core:mem"
 import "core:os"
 import win32 "core:sys/windows"
+import "thirdparty/xinput"
 
 application_running: bool
 back_buffer: Win32_Offscreen_Buffer
@@ -32,7 +33,6 @@ main :: proc() {
 
 	reset_tracking_allocator :: proc(a: ^mem.Tracking_Allocator) -> bool {
 		err := false
-
 		for _, value in a.allocation_map {
 			fmt.printf("%v: Leaked %v bytes\n", value.location, value.size)
 			err = true
@@ -73,6 +73,7 @@ main :: proc() {
 	device_context := win32.GetDC(window)
 	application_running = true
 	xOffset: i32 = 0
+	yOffset: i32 = 0
 
 	// We need to manually tell windows that we want to listen for events.
 	for application_running {
@@ -87,8 +88,50 @@ main :: proc() {
 			win32.DispatchMessageW(&message)
 		}
 
-		draw_gradient(&back_buffer, xOffset, 0)
-		xOffset += 1
+		// read input
+		for controller_idx := 0; controller_idx < xinput.XUSER_MAX_COUNT; controller_idx += 1 {
+			user := xinput.XUSER(controller_idx)
+			controller_state: xinput.XINPUT_STATE
+			state_result := xinput.XInputGetState(user, &controller_state)
+
+			// controller is plugged in
+			if u32(state_result) == win32.ERROR_SUCCESS {
+				using controller_state.Gamepad
+
+				dpad_up := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_UP in wButtons
+				dpad_down := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_DOWN in wButtons
+				dpad_left := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_LEFT in wButtons
+				dpad_right := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_RIGHT in wButtons
+				start := xinput.XINPUT_GAMEPAD_BUTTON_BIT.START in wButtons
+				back := xinput.XINPUT_GAMEPAD_BUTTON_BIT.BACK in wButtons
+				left_shoulder := xinput.XINPUT_GAMEPAD_BUTTON_BIT.LEFT_SHOULDER in wButtons
+				right_shoulder := xinput.XINPUT_GAMEPAD_BUTTON_BIT.RIGHT_SHOULDER in wButtons
+				a := xinput.XINPUT_GAMEPAD_BUTTON_BIT.A in wButtons
+				b := xinput.XINPUT_GAMEPAD_BUTTON_BIT.B in wButtons
+				x := xinput.XINPUT_GAMEPAD_BUTTON_BIT.X in wButtons
+				y := xinput.XINPUT_GAMEPAD_BUTTON_BIT.Y in wButtons
+				left_stick_x := sThumbLX
+				left_stick_y := sThumbLY
+
+				xOffset += i32(left_stick_x >> 12)
+				yOffset -= i32(left_stick_y >> 12)
+
+				if a {
+					fmt.println(a)
+					xOffset += 1
+
+					vibration := xinput.XINPUT_VIBRATION {
+						wLeftMotorSpeed  = 64000,
+						wRightMotorSpeed = 64000,
+					}
+
+					xinput.XInputSetState(user, &vibration)
+				}
+			}
+		}
+
+		draw_gradient(&back_buffer, xOffset, yOffset)
+		yOffset -= 1
 
 		dimensions := win32_get_window_dimensions(window)
 		win32_display_buffer_to_window(
@@ -151,6 +194,42 @@ win32_window_callback :: proc "stdcall" (
 			dimensions.height,
 		)
 		win32.EndPaint(window_handle, &paint)
+		break
+
+	case win32.WM_SYSKEYDOWN:
+		fallthrough
+	case win32.WM_SYSKEYUP:
+		fallthrough
+	case win32.WM_KEYDOWN:
+		fallthrough
+	case win32.WM_KEYUP:
+		key_code := u32(w_param) // key code Windows sends to this application.
+		was_down := (l_param & (1 << 30)) != 0 // Look up on MSDN for specific bit shifting values.
+		is_down := (l_param & (1 << 31)) == 0 // Look up on MSDN for specific bit shifting values.
+
+		if was_down == is_down do break // skip to avoid repeating input.
+
+		if key_code == win32.VK_UP {
+		} else if key_code == win32.VK_DOWN {
+		} else if key_code == win32.VK_LEFT {
+		} else if key_code == win32.VK_RIGHT {
+		} else if key_code == win32.VK_W {
+		} else if key_code == win32.VK_A {
+		} else if key_code == win32.VK_A {
+		} else if key_code == win32.VK_D {
+		} else if key_code == win32.VK_Q {
+		} else if key_code == win32.VK_E {
+		} else if key_code == win32.VK_ESCAPE {
+			fmt.println("Escape")
+			if is_down {
+				fmt.println("Is Down")
+			}
+			if was_down {
+				fmt.println("Was Down")
+			}
+
+		} else if key_code == win32.VK_SPACE {
+		}
 		break
 
 	// Let Windows handle all other events as their 'default' behaviour
@@ -222,7 +301,7 @@ draw_gradient :: proc(buffer: ^Win32_Offscreen_Buffer, xOffset, yOffset: i32) {
 	for y in 0 ..< buffer.height {
 		for x in 0 ..< buffer.width {
 			blue := u8(x + xOffset) // Extract the lowest bits from the 'x' use as blue color. Offset is just for animation.
-			green := u8(y) // Extract the lowest bits from the 'y' use as blue color.
+			green := u8(y + yOffset) // Extract the lowest bits from the 'y' use as blue color. Offset is just for animation.
 
 			// Combine green and blue into a single u32
 			pixel_value := u32(green) << 8 | u32(blue)
