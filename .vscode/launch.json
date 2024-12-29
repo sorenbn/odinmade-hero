@@ -2,22 +2,22 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run Odin",
+            "name": "Release",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "cmd.exe",
             "args": [
                 "/C",
-                "odin run . -out:build/dev/OdinmadeHero-dev.exe"
+                "odin run . -out:build/release/OdinmadeHero-release.exe"
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         },
         {
+            "name": "Debug",
             "type": "cppvsdbg",
             "request": "launch",
             "preLaunchTask": "Build Debug",
-            "name": "Debug",
             "program": "${workspaceFolder}/build/debug/OdinmadeHero-debug.exe",
             "args": [],
             "cwd": "${workspaceFolder}",

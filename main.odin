@@ -96,22 +96,23 @@ main :: proc() {
 
 			// controller is plugged in
 			if u32(state_result) == win32.ERROR_SUCCESS {
-				using controller_state.Gamepad
+				gamepad: ^xinput.XINPUT_GAMEPAD = &controller_state.Gamepad
 
-				dpad_up := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_UP in wButtons
-				dpad_down := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_DOWN in wButtons
-				dpad_left := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_LEFT in wButtons
-				dpad_right := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_RIGHT in wButtons
-				start := xinput.XINPUT_GAMEPAD_BUTTON_BIT.START in wButtons
-				back := xinput.XINPUT_GAMEPAD_BUTTON_BIT.BACK in wButtons
-				left_shoulder := xinput.XINPUT_GAMEPAD_BUTTON_BIT.LEFT_SHOULDER in wButtons
-				right_shoulder := xinput.XINPUT_GAMEPAD_BUTTON_BIT.RIGHT_SHOULDER in wButtons
-				a := xinput.XINPUT_GAMEPAD_BUTTON_BIT.A in wButtons
-				b := xinput.XINPUT_GAMEPAD_BUTTON_BIT.B in wButtons
-				x := xinput.XINPUT_GAMEPAD_BUTTON_BIT.X in wButtons
-				y := xinput.XINPUT_GAMEPAD_BUTTON_BIT.Y in wButtons
-				left_stick_x := sThumbLX
-				left_stick_y := sThumbLY
+				dpad_up := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_UP in gamepad.wButtons
+				dpad_down := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_DOWN in gamepad.wButtons
+				dpad_left := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_LEFT in gamepad.wButtons
+				dpad_right := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_RIGHT in gamepad.wButtons
+				start := xinput.XINPUT_GAMEPAD_BUTTON_BIT.START in gamepad.wButtons
+				back := xinput.XINPUT_GAMEPAD_BUTTON_BIT.BACK in gamepad.wButtons
+				left_shoulder := xinput.XINPUT_GAMEPAD_BUTTON_BIT.LEFT_SHOULDER in gamepad.wButtons
+				right_shoulder :=
+					xinput.XINPUT_GAMEPAD_BUTTON_BIT.RIGHT_SHOULDER in gamepad.wButtons
+				a := xinput.XINPUT_GAMEPAD_BUTTON_BIT.A in gamepad.wButtons
+				b := xinput.XINPUT_GAMEPAD_BUTTON_BIT.B in gamepad.wButtons
+				x := xinput.XINPUT_GAMEPAD_BUTTON_BIT.X in gamepad.wButtons
+				y := xinput.XINPUT_GAMEPAD_BUTTON_BIT.Y in gamepad.wButtons
+				left_stick_x := gamepad.sThumbLX
+				left_stick_y := gamepad.sThumbLY
 
 				xOffset += i32(left_stick_x >> 12)
 				yOffset -= i32(left_stick_y >> 12)
