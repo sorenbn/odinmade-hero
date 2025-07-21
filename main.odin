@@ -96,6 +96,7 @@ main :: proc() {
 
 			// controller is plugged in
 			if u32(state_result) == win32.ERROR_SUCCESS {
+				// using controller_state.Gamepad
 				gamepad: ^xinput.XINPUT_GAMEPAD = &controller_state.Gamepad
 
 				dpad_up := xinput.XINPUT_GAMEPAD_BUTTON_BIT.DPAD_UP in gamepad.wButtons
