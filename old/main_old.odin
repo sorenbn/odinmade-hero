@@ -1,11 +1,9 @@
-package main
+package main_old
 
 import "base:runtime"
 import "core:fmt"
 import "core:log"
-import "core:math/rand"
 import "core:mem"
-import "core:os"
 import win32 "core:sys/windows"
 import "thirdparty/xinput"
 
@@ -44,7 +42,7 @@ main :: proc() {
 
 	instance := cast(win32.HINSTANCE)win32.GetModuleHandleW(nil) // get instance to application process
 	window_class: win32.WNDCLASSW = {
-		style         = win32.CS_HREDRAW | win32.CS_VREDRAW, // repaint the whole window, if resize. 
+		style         = win32.CS_HREDRAW | win32.CS_VREDRAW, // repaint the whole window, if resize.
 		lpfnWndProc   = win32_window_callback, // procedure callback for windows events
 		hInstance     = instance, // instance of the application
 		lpszClassName = win32.utf8_to_wstring("OdinmadeHeroWindowClass"), // class name for window
