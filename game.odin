@@ -4,29 +4,28 @@ import k2 "../../SDKs/karl2d"
 import "core:fmt"
 import "core:math/linalg"
 
+Vec2i :: [2]i32
+
 Game_State :: struct {
-	player_pos: k2.Vec2,
+	player_pos:         k2.Vec2,
+	player_tilemap_pos: Vec2i,
 }
 
-ROWS :: 9
-COLUMNS :: 17
-TILE_WIDTH :: 54
-TILE_HEIGHT :: 54
-OFFSET_X :: 10
-OFFSET_Y :: 10
+World :: struct {
+	tilemap_dimension: Vec2i,
+	tile_width:        f32,
+	tile_height:       f32,
+	offset_x:          f32,
+	offset_y:          f32,
+	tilemaps:          ^[WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap,
+}
+
+Tilemap :: struct {
+	tiles: []i32,
+}
+
 MOVE_SPEED :: 180.0
-
-tilemap: [ROWS][COLUMNS]u32 = {
-	{1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1},
-	{1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1},
-	{1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1},
-	{1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1},
-	{0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
-	{1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1},
-	{1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1},
-	{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1},
-	{1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1},
-}
+WORLD_DIMENSION :: Vec2i{2, 2}
 
 game_state: Game_State
 fps_smoothed: f32 = 60
@@ -35,13 +34,43 @@ main :: proc() {
 	k2.init(
 		940,
 		540,
-		"Odinmade Hero K2D",
+		"Odinmade K2D Hero",
 		options = {window_mode = .Windowed, anti_alias = true, disable_auto_scale_hint = true},
 	)
 
-	game_state = {
-		player_pos = {OFFSET_X + TILE_WIDTH * 4, OFFSET_Y + TILE_HEIGHT * 3},
+	tilemaps: [WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap = {}
+
+	world := World {
+		tilemap_dimension = {17, 9},
+		tile_width        = 54,
+		tile_height       = 54,
+		offset_x          = 10,
+		offset_y          = 10,
+		tilemaps          = &tilemaps,
 	}
+
+	tilemaps[0][0].tiles = TILES_00
+	tilemaps[0][1].tiles = TILES_01
+	tilemaps[1][1].tiles = TILES_11
+	tilemaps[1][0].tiles = TILES_10
+
+	current_tilemap, ok := get_tilemap(&world, 0, 0)
+
+	if !ok {
+		fmt.println("Error, no tilemap was found.")
+		return
+	}
+
+	game_state = {
+		player_pos         = {
+			world.offset_x + world.tile_width * 4,
+			world.offset_y + world.tile_height * 4,
+		},
+		player_tilemap_pos = {0, 0},
+	}
+
+	player_width := world.tile_width * 0.75
+	player_height := world.tile_height
 
 	for k2.update() {
 		if k2.key_went_down(.Escape) do break
@@ -74,13 +103,30 @@ main :: proc() {
 			velocity = linalg.normalize(velocity)
 		}
 
-		game_state.player_pos += velocity * MOVE_SPEED * delta_time
+		next_pos := game_state.player_pos + velocity * MOVE_SPEED * delta_time
 
+		// if is_tilemap_position_empty(&world, current_tilemap, next_pos) &&
+		//    is_tilemap_position_empty(
+		// 	   &world,
+		// 	   current_tilemap,
+		// 	   next_pos + k2.Vec2{player_width * 0.5, 0},
+		//    ) &&
+		//    is_tilemap_position_empty(
+		// 	   &world,
+		// 	   current_tilemap,
+		// 	   next_pos - k2.Vec2{player_width * 0.5, 0},
+		//    )
+
+		if is_tilemap_world_position_empty(&world, game_state.player_tilemap_pos, next_pos) {
+			game_state.player_pos = next_pos
+		}
+
+		// DRAW
 		k2.clear(k2.BLACK)
 
-		for row in 0 ..< ROWS {
-			for col in 0 ..< COLUMNS {
-				tile := tilemap[row][col]
+		for y in 0 ..< world.tilemap_dimension.y {
+			for x in 0 ..< world.tilemap_dimension.x {
+				tile := get_tile_value_unchecked(&world, current_tilemap, x, y)
 
 				color: k2.Color
 				switch tile {
@@ -90,31 +136,77 @@ main :: proc() {
 					color = k2.WHITE
 				}
 
-				position := k2.Vec2{f32(col * TILE_WIDTH), f32(row * TILE_HEIGHT)}
+				position := k2.Vec2{f32(x) * world.tile_width, f32(y) * world.tile_height}
+
 				tile_rect := k2.Rect {
-					OFFSET_X + position.x,
-					OFFSET_Y + position.y,
-					TILE_WIDTH,
-					TILE_HEIGHT,
+					world.offset_x + position.x,
+					world.offset_y + position.y,
+					world.tile_width,
+					world.tile_height,
 				}
 
 				k2.draw_rect(tile_rect, color)
 			}
 		}
 
-		PLAYER_WIDTH :: TILE_WIDTH * 0.75
 		player_rect: k2.Rect = {
 			game_state.player_pos.x,
 			game_state.player_pos.y,
-			PLAYER_WIDTH,
-			TILE_HEIGHT,
+			player_width,
+			player_height,
 		}
 
-		k2.draw_rect(player_rect, k2.GREEN)
+		k2.draw_rect(player_rect, k2.GREEN, {player_rect.w / 2, world.tile_height})
 
 		k2.draw_text(fmt.tprintf("FPS: %.0f", fps_smoothed), {10, 10}, 24.0, k2.GREEN)
 		k2.present()
 	}
 
 	k2.shutdown()
+}
+
+is_tilemap_position_empty :: proc(world: ^World, tilemap: ^Tilemap, position: k2.Vec2) -> bool {
+	is_valid_move := false
+
+	tile_pos := [2]i32 {
+		i32((position.x - world.offset_x) / world.tile_width),
+		i32((position.y - world.offset_y) / world.tile_height),
+	}
+
+	if tile_pos.x >= 0 &&
+	   tile_pos.x < world.tilemap_dimension.x &&
+	   tile_pos.y >= 0 &&
+	   tile_pos.y < world.tilemap_dimension.x {
+
+		tile := get_tile_value_unchecked(world, tilemap, tile_pos.x, tile_pos.y)
+
+		is_valid_move = tile == 0
+	}
+
+	return is_valid_move
+}
+
+is_tilemap_world_position_empty :: proc(
+	world: ^World,
+	tilemap_position: Vec2i,
+	position: k2.Vec2,
+) -> bool {
+	return false
+}
+
+get_tile_value_unchecked :: proc(world: ^World, tilemap: ^Tilemap, x, y: i32) -> i32 {
+	index := index_2d_to_1d(x, y, world.tilemap_dimension.x)
+	return tilemap.tiles[index]
+}
+
+get_tilemap :: proc(world: ^World, x, y: i32) -> (^Tilemap, bool) {
+	if x >= 0 && x < WORLD_DIMENSION.x && y >= 0 && y < WORLD_DIMENSION.y {
+		return &world.tilemaps[x][y], true
+	}
+
+	return nil, false
+}
+
+index_2d_to_1d :: proc(x, y, x_dimension: i32) -> i32 {
+	return y * x_dimension + x
 }
