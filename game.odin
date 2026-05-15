@@ -25,14 +25,14 @@ Tilemap :: struct {
 }
 
 Position_Data :: struct {
-	position_inside_tile: k2.Vec2, // relative to upper left corner of tile
-	tilemap_pos:          Vec2i, // tilemap grid position
+	tilemap_pos:          Vec2i, // tilemap grid position (which tilemap are we on)
 	tile_pos:             Vec2i, // tile (cell) position
+	position_inside_tile: k2.Vec2, // relative to upper left corner of tile in pixels
 }
 
 Raw_Position_Data :: struct {
-	world_position: k2.Vec2, // relative to upper left corner of tilemap
-	tilemap_pos:    Vec2i,
+	tilemap_pos:    Vec2i, // tilemap grid position (which tilemap are we on)
+	world_position: k2.Vec2, // relative to upper left corner of tilemap in pixels
 }
 
 MOVE_SPEED :: 180.0
