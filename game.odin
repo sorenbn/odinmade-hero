@@ -117,7 +117,8 @@ main :: proc() {
 		// 	   next_pos - k2.Vec2{player_width * 0.5, 0},
 		//    )
 
-		if is_tilemap_world_position_empty(&world, game_state.player_tilemap_pos, next_pos) {
+		// if is_tilemap_world_position_empty(&world, game_state.player_tilemap_pos, next_pos) {
+		if is_tilemap_position_empty(&world, current_tilemap, next_pos) {
 			game_state.player_pos = next_pos
 		}
 
@@ -145,7 +146,8 @@ main :: proc() {
 					world.tile_height,
 				}
 
-				k2.draw_rect(tile_rect, color)
+				// k2.draw_rect(tile_rect, color)
+				k2.draw_rect_outline(tile_rect, 2, color)
 			}
 		}
 
@@ -176,7 +178,7 @@ is_tilemap_position_empty :: proc(world: ^World, tilemap: ^Tilemap, position: k2
 	if tile_pos.x >= 0 &&
 	   tile_pos.x < world.tilemap_dimension.x &&
 	   tile_pos.y >= 0 &&
-	   tile_pos.y < world.tilemap_dimension.x {
+	   tile_pos.y < world.tilemap_dimension.y {
 
 		tile := get_tile_value_unchecked(world, tilemap, tile_pos.x, tile_pos.y)
 
@@ -191,7 +193,16 @@ is_tilemap_world_position_empty :: proc(
 	tilemap_position: Vec2i,
 	position: k2.Vec2,
 ) -> bool {
-	return false
+
+	empty := false
+
+	tile_pos := [2]i32 {
+		i32((position.x - world.offset_x) / world.tile_width),
+		i32((position.y - world.offset_y) / world.tile_height),
+	}
+
+
+	return empty
 }
 
 get_tile_value_unchecked :: proc(world: ^World, tilemap: ^Tilemap, x, y: i32) -> i32 {
