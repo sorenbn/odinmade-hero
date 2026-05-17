@@ -12,34 +12,41 @@ Game_State :: struct {
 }
 
 World :: struct {
-	tilemap_dimension:   Vec2i,
+	chunk_dimension:     u32, // size of the chunk itself - 256
+	chunk_count:         Vec2u, // amount of actual "tilemaps" / chunks
 	tile_size_per_meter: f32,
 	tile_size_per_pixel: i32, // real world unit
 	meters_to_pixels:    f32,
-	offset_x_in_pixels:  f32, // todo: convert to vec2i
-	offset_y_in_pixels:  f32, // todo: convert to vec2i
-	tilemaps:            ^[WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap,
+	chunk_shift:         u32,
+	chunk_mask:          u32,
+	tile_chunks:         ^[]Tile_Chunk,
 }
 
-Tilemap :: struct {
-	tiles: []i32,
+Tile_Chunk :: struct {
+	tiles: []u32,
 }
 
 Position_Data :: struct {
-	tilemap_pos:          Vec2i, // tilemap grid position (which tilemap are we on)
-	tile_pos:             Vec2i, // tile (cell) position
-	position_inside_tile: k2.Vec2, // relative to bottom left corner of tile (in meters)
-
-	// Packed tilepositions - low bits are for the tile index, and high bits are for the tile page/chunk
-	_tile_pos:            Vec2u,
+	// Packed tilepositions - low bits are for the tile index, and high bits are for the chunk
+	tile_absolute_pos: Vec2u,
+	// relative to bottom left corner of tile (in meters)
+	tile_relative_pos: k2.Vec2,
 }
 
-DEBUG :: true
+Tile_Chunk_Position :: struct {
+	tile_chunk_pos:          Vec2u,
+	chunk_relative_tile_pos: Vec2u, // relative position inside chunk
+}
 
+DEBUG :: false
 MOVE_SPEED :: 6.0 // meters/s
-WORLD_DIMENSION :: Vec2i{2, 2}
+CHUNK_DIMENSION :: 256
+CHUNK_COUNT_X :: 17
+CHUNK_COUNT_Y :: 9
 
 game_state: Game_State
+world: World
+tile_chunks: []Tile_Chunk
 fps_smoothed: f32 = 60
 
 main :: proc() {
@@ -50,35 +57,33 @@ main :: proc() {
 		options = {window_mode = .Windowed, anti_alias = true, disable_auto_scale_hint = true},
 	)
 
-	tilemaps: [WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap = {}
-
-	world := World {
-		tilemap_dimension   = {17, 9},
-		tile_size_per_meter = 1.4,
-		tile_size_per_pixel = 50,
-		tilemaps            = &tilemaps,
+	tiles := make([]u32, CHUNK_DIMENSION * CHUNK_DIMENSION)
+	for row, y in test_tiles {
+		for column, x in row {
+			index := index_2d_to_1d(u32(x), u32(y), u32(CHUNK_DIMENSION))
+			tiles[index] = column
+		}
 	}
 
-	world.offset_x_in_pixels = f32(world.tile_size_per_pixel) * 0.5
-	world.offset_y_in_pixels =
-		f32(world.tile_size_per_pixel * world.tilemap_dimension.y) +
-		f32(world.tile_size_per_pixel) * 0.5
+	tile_chunks = {Tile_Chunk{tiles = tiles}}
+
+	world = {}
+	world.chunk_dimension = CHUNK_DIMENSION
+	world.chunk_count = {1, 1}
+	world.tile_chunks = &tile_chunks
+	world.tile_size_per_meter = 1.4
+	world.tile_size_per_pixel = 50
+	world.chunk_shift = 8 // 256 x 256 tile chunks
+	world.chunk_mask = (1 << world.chunk_shift)
+	world.chunk_mask = world.chunk_mask - 1
 	world.meters_to_pixels = f32(world.tile_size_per_pixel) / f32(world.tile_size_per_meter)
 
-	tilemaps[0][0].tiles = TILES_00
-	tilemaps[0][1].tiles = TILES_01
-	tilemaps[1][1].tiles = TILES_11
-	tilemaps[1][0].tiles = TILES_10
-
-	current_tilemap, ok := get_tilemap(&world, 0, 0)
-
-	if !ok {
-		fmt.println("Error, no tilemap was found.")
-		return
-	}
+	offset_x_in_pixels := f32(world.tile_size_per_pixel) * 0.5
+	offset_y_in_pixels :=
+		f32(u32(world.tile_size_per_pixel) * CHUNK_COUNT_Y) + f32(world.tile_size_per_pixel) * 0.5
 
 	game_state = {
-		player_pos = {tilemap_pos = {0, 0}, tile_pos = {1, 1}, position_inside_tile = {1.0, 1.0}},
+		player_pos = {tile_absolute_pos = {3, 3}, tile_relative_pos = {0.7, 0.5}},
 	}
 
 	player_height: f32 = 1.4
@@ -116,35 +121,35 @@ main :: proc() {
 		}
 
 		next_position := game_state.player_pos
-		next_position.position_inside_tile += input * MOVE_SPEED * delta_time
+		next_position.tile_relative_pos += input * MOVE_SPEED * delta_time
 		next_position = calculate_position_data(&world, next_position)
 
 		left := next_position
-		left.position_inside_tile.x -= player_width * 0.5
+		left.tile_relative_pos.x -= player_width * 0.5
 		left = calculate_position_data(&world, left)
 
 		right := next_position
-		right.position_inside_tile.x += player_width * 0.5
+		right.tile_relative_pos.x += player_width * 0.5
 		right = calculate_position_data(&world, right)
 
-		if is_tilemap_world_position_empty(&world, next_position) &&
-		   is_tilemap_world_position_empty(&world, left) &&
-		   is_tilemap_world_position_empty(&world, right) {
+		if is_position_empty(&world, next_position) &&
+		   is_position_empty(&world, left) &&
+		   is_position_empty(&world, right) {
 			game_state.player_pos = next_position
 		}
 
 		// DRAW
 		k2.clear(k2.BLACK)
 
-		for y in 0 ..< world.tilemap_dimension.y {
-			for x in 0 ..< world.tilemap_dimension.x {
-				tilemap, ok := get_tilemap(
-					&world,
-					game_state.player_pos.tilemap_pos.x,
-					game_state.player_pos.tilemap_pos.y,
-				)
+		center := k2.Vec2{f32(k2.get_screen_width() / 2.0), f32(k2.get_screen_height() / 2.0)}
 
-				tile := get_tile_value_unchecked(&world, tilemap, x, y)
+		for y in -10 ..< 10 {
+			for x in -20 ..< 20 {
+				coordinate: [2]u32 = {
+					u32(x) + game_state.player_pos.tile_absolute_pos.x,
+					u32(y) + game_state.player_pos.tile_absolute_pos.y,
+				}
+				tile := get_tile_value(&world, coordinate)
 
 				color: k2.Color
 				switch tile {
@@ -160,15 +165,15 @@ main :: proc() {
 				}
 
 				tile_rect := k2.Rect {
-					world.offset_x_in_pixels + position.x,
-					world.offset_y_in_pixels - position.y,
+					center.x + position.x,
+					center.y - position.y,
 					f32(world.tile_size_per_pixel),
 					f32(world.tile_size_per_pixel),
 				}
 
 				if DEBUG {
-					if game_state.player_pos.tile_pos.x == x &&
-					   game_state.player_pos.tile_pos.y == y {
+					if game_state.player_pos.tile_absolute_pos.x == coordinate.x &&
+					   game_state.player_pos.tile_absolute_pos.y == coordinate.y {
 						color = k2.color_alpha(k2.WHITE, 127)
 					}
 				}
@@ -182,15 +187,8 @@ main :: proc() {
 			}
 		}
 
-		x_pos :=
-			world.offset_x_in_pixels +
-			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.x) +
-			game_state.player_pos.position_inside_tile.x * world.meters_to_pixels
-
-		y_pos :=
-			world.offset_y_in_pixels -
-			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.y) -
-			game_state.player_pos.position_inside_tile.y * world.meters_to_pixels
+		x_pos := center.x + world.meters_to_pixels * game_state.player_pos.tile_relative_pos.x
+		y_pos := center.y - world.meters_to_pixels * game_state.player_pos.tile_relative_pos.y
 
 		player_rect: k2.Rect = {
 			x = x_pos,
@@ -222,19 +220,19 @@ main :: proc() {
 
 			k2.draw_text(fmt.tprintf("FPS: %.0f", fps_smoothed), {10, 10}, 24.0, k2.RED)
 			k2.draw_text(
-				fmt.tprint("Tilemap: ", game_state.player_pos.tilemap_pos),
+				fmt.tprint("Tilemap: ", game_state.player_pos.tile_absolute_pos),
 				{10, 40},
 				24.0,
 				k2.RED,
 			)
 			k2.draw_text(
-				fmt.tprint("Tile: ", game_state.player_pos.tile_pos),
+				fmt.tprint("Tile: ", game_state.player_pos.tile_absolute_pos),
 				{10, 70},
 				24.0,
 				k2.RED,
 			)
 			k2.draw_text(
-				fmt.tprint("Local Position: ", game_state.player_pos.position_inside_tile),
+				fmt.tprint("Local Position: ", game_state.player_pos.tile_relative_pos),
 				{10, 100},
 				24.0,
 				k2.RED,
@@ -247,98 +245,99 @@ main :: proc() {
 	k2.shutdown()
 }
 
-is_tilemap_position_empty :: proc(world: ^World, tilemap: ^Tilemap, tile_pos: Vec2i) -> bool {
-	is_valid_move := false
-
-	if tile_pos.x >= 0 &&
-	   tile_pos.x < world.tilemap_dimension.x &&
-	   tile_pos.y >= 0 &&
-	   tile_pos.y < world.tilemap_dimension.y {
-
-		tile := get_tile_value_unchecked(world, tilemap, tile_pos.x, tile_pos.y)
-
-		is_valid_move = tile == 0
-	}
-
-	return is_valid_move
-}
-
-is_tilemap_world_position_empty :: proc(world: ^World, position_data: Position_Data) -> bool {
-	empty := false
-
-	tilemap, ok := get_tilemap(world, position_data.tilemap_pos.x, position_data.tilemap_pos.y)
-	if !ok do return empty
-
-	empty = is_tilemap_position_empty(world, tilemap, position_data.tile_pos)
+is_position_empty :: proc(world: ^World, position_data: Position_Data) -> bool {
+	tile_value: u32 = get_tile_value(world, position_data.tile_absolute_pos)
+	empty: bool = tile_value == 0
 
 	return empty
+}
+
+get_chunk_position :: proc(world: ^World, absolute_tile_pos: [2]u32) -> Tile_Chunk_Position {
+	result: Tile_Chunk_Position = {
+		// shave off the first 8 bits, and only get read the remaining 24 bits
+		tile_chunk_pos          = {
+			absolute_tile_pos.x >> world.chunk_shift,
+			absolute_tile_pos.y >> world.chunk_shift,
+		},
+		// shave off the 24 bits thats storing the chunk pos, and only care about the remaining bits to tell relative tile pos
+		chunk_relative_tile_pos = {
+			absolute_tile_pos.x & world.chunk_mask,
+			absolute_tile_pos.y & world.chunk_mask,
+		},
+	}
+
+	return result
+}
+
+get_tile_value :: proc(world: ^World, absolute_tile_pos: [2]u32) -> u32 {
+	tile_chunk_pos := get_chunk_position(world, absolute_tile_pos)
+	tile_chunk, ok := get_chunk(
+		world,
+		tile_chunk_pos.tile_chunk_pos.x,
+		tile_chunk_pos.tile_chunk_pos.y,
+	)
+
+	tile_value: u32 = get_tile_value_from_chunk(
+		world,
+		tile_chunk,
+		tile_chunk_pos.chunk_relative_tile_pos.x,
+		tile_chunk_pos.chunk_relative_tile_pos.y,
+	)
+
+	return tile_value
+}
+
+get_tile_value_from_chunk :: proc(world: ^World, chunk: ^Tile_Chunk, x, y: u32) -> u32 {
+	result: u32 = 0
+
+	if chunk != nil {
+		result = get_tile_value_unchecked(world, chunk, x, y)
+	}
+
+	return result
+}
+
+get_tile_value_unchecked :: proc(world: ^World, chunk: ^Tile_Chunk, x, y: u32) -> u32 {
+	assert(chunk != nil)
+	assert(x < world.chunk_dimension)
+	assert(y < world.chunk_dimension)
+
+	index := index_2d_to_1d(x, y, world.chunk_dimension)
+	return chunk.tiles[index]
 }
 
 calculate_position_data :: proc(world: ^World, position_data: Position_Data) -> Position_Data {
 	result: Position_Data = position_data
 
-	recalculate_coordinate(
-		world,
-		world.tilemap_dimension.x,
-		&result.tilemap_pos.x,
-		&result.tile_pos.x,
-		&result.position_inside_tile.x,
-	)
-
-	recalculate_coordinate(
-		world,
-		world.tilemap_dimension.y,
-		&result.tilemap_pos.y,
-		&result.tile_pos.y,
-		&result.position_inside_tile.y,
-	)
+	recalculate_coordinate(world, &result.tile_absolute_pos.x, &result.tile_relative_pos.x)
+	recalculate_coordinate(world, &result.tile_absolute_pos.y, &result.tile_relative_pos.y)
 
 	return result
 }
 
-recalculate_coordinate :: proc(
-	world: ^World,
-	tilemap_dimension: i32,
-	tilemap_pos: ^i32,
-	tile_pos: ^i32,
-	position_in_tile: ^f32,
-) {
+recalculate_coordinate :: proc(world: ^World, tile_pos: ^u32, position_in_tile: ^f32) {
 	// figure out how much our position could be offset from the "base" tile that we stood on
-	offset: i32 = i32(linalg.floor(position_in_tile^ / f32(world.tile_size_per_meter)))
+	offset: int = int(linalg.floor(position_in_tile^ / f32(world.tile_size_per_meter)))
+
 	// offset that tile position
-	tile_pos^ += offset
+	tile_pos^ += u32(offset)
+
 	// recalculate the position inside the new tile, to make sure it still sits within the tile size boundary
 	position_in_tile^ -= f32(offset) * f32(world.tile_size_per_meter)
 
 	assert(position_in_tile^ >= 0)
-	assert(position_in_tile^ < f32(world.tile_size_per_meter))
-
-	// offset the tilemap itself, if we step outside the lower boundaries of it
-	if tile_pos^ < 0 {
-		tile_pos^ = tilemap_dimension + tile_pos^
-		tilemap_pos^ -= 1
-	}
-
-	// offset the tilemap itself, if we step outside the upper boundaries of it
-	if tile_pos^ >= tilemap_dimension {
-		tile_pos^ = tile_pos^ - tilemap_dimension
-		tilemap_pos^ += 1
-	}
+	assert(position_in_tile^ <= f32(world.tile_size_per_meter))
 }
 
-get_tile_value_unchecked :: proc(world: ^World, tilemap: ^Tilemap, x, y: i32) -> i32 {
-	index := index_2d_to_1d(x, y, world.tilemap_dimension.x)
-	return tilemap.tiles[index]
-}
-
-get_tilemap :: proc(world: ^World, x, y: i32) -> (^Tilemap, bool) {
-	if x >= 0 && x < WORLD_DIMENSION.x && y >= 0 && y < WORLD_DIMENSION.y {
-		return &world.tilemaps[x][y], true
+get_chunk :: proc(world: ^World, x, y: u32) -> (^Tile_Chunk, bool) {
+	if x >= 0 && x < world.chunk_count.x && y >= 0 && y < world.chunk_count.y {
+		index := index_2d_to_1d(x, y, world.chunk_count.x)
+		return &world.tile_chunks[index], true
 	}
 
 	return nil, false
 }
 
-index_2d_to_1d :: proc(x, y, x_dimension: i32) -> i32 {
-	return y * x_dimension + x
+index_2d_to_1d :: proc(x, y, dimension: u32) -> u32 {
+	return y * dimension + x
 }
