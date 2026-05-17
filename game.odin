@@ -5,19 +5,20 @@ import "core:fmt"
 import "core:math/linalg"
 
 Vec2i :: [2]i32
+Vec2u :: [2]u32
 
 Game_State :: struct {
-	player_pos:         k2.Vec2, // the world position inside that tilemap
-	player_tilemap_pos: Vec2i, // the current tilemap the player is inside
+	player_pos: Position_Data,
 }
 
 World :: struct {
-	tilemap_dimension: Vec2i,
-	tile_width:        f32,
-	tile_height:       f32,
-	offset_x:          f32,
-	offset_y:          f32,
-	tilemaps:          ^[WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap,
+	tilemap_dimension:   Vec2i,
+	tile_size_per_meter: f32,
+	tile_size_per_pixel: i32, // real world unit
+	meters_to_pixels:    f32,
+	offset_x:            f32, // todo: convert to vec2i
+	offset_y:            f32, // todo: convert to vec2i
+	tilemaps:            ^[WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap,
 }
 
 Tilemap :: struct {
@@ -28,14 +29,14 @@ Position_Data :: struct {
 	tilemap_pos:          Vec2i, // tilemap grid position (which tilemap are we on)
 	tile_pos:             Vec2i, // tile (cell) position
 	position_inside_tile: k2.Vec2, // relative to upper left corner of tile in pixels
+
+	// Packed tilepositions - low bits are for the tile index, and high bits are for the tile page/chunk
+	_tile_pos:            Vec2u,
 }
 
-Raw_Position_Data :: struct {
-	tilemap_pos:    Vec2i, // tilemap grid position (which tilemap are we on)
-	world_position: k2.Vec2, // relative to upper left corner of tilemap in pixels
-}
+DEBUG :: true
 
-MOVE_SPEED :: 180.0
+MOVE_SPEED :: 6.0 // meters/s
 WORLD_DIMENSION :: Vec2i{2, 2}
 
 game_state: Game_State
@@ -52,13 +53,15 @@ main :: proc() {
 	tilemaps: [WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap = {}
 
 	world := World {
-		tilemap_dimension = {17, 9},
-		tile_width        = 54,
-		tile_height       = 54,
-		offset_x          = 10,
-		offset_y          = 10,
-		tilemaps          = &tilemaps,
+		tilemap_dimension   = {17, 9},
+		tile_size_per_meter = 1.4,
+		tile_size_per_pixel = 50,
+		tilemaps            = &tilemaps,
 	}
+
+	world.offset_x = f32(world.tile_size_per_pixel) * 0.5
+	world.offset_y = f32(world.tile_size_per_pixel) * 0.5
+	world.meters_to_pixels = f32(world.tile_size_per_pixel) / f32(world.tile_size_per_meter)
 
 	tilemaps[0][0].tiles = TILES_00
 	tilemaps[0][1].tiles = TILES_01
@@ -73,15 +76,11 @@ main :: proc() {
 	}
 
 	game_state = {
-		player_pos         = {
-			world.offset_x + world.tile_width * 4,
-			world.offset_y + world.tile_height * 4,
-		},
-		player_tilemap_pos = {0, 0},
+		player_pos = {tilemap_pos = {0, 0}, tile_pos = {4, 4}, position_inside_tile = {5.0, 5.0}},
 	}
 
-	player_width := world.tile_width * 0.75
-	player_height := world.tile_height
+	player_height: f32 = 1.4
+	player_width: f32 = player_height * 0.75
 
 	for k2.update() {
 		if k2.key_went_down(.Escape) do break
@@ -92,55 +91,45 @@ main :: proc() {
 		// keep 90% of the old fps value, and only add 10% of the new value, to have a smooth transition between fps values instead of rapid jumping.
 		fps_smoothed = fps_smoothed * 0.9 + fps * 0.1
 
-		velocity: k2.Vec2 = {}
+		input: k2.Vec2 = {}
 
 		if k2.key_is_held(.W) {
-			velocity.y -= 1
+			input.y -= 1
 		}
 
 		if k2.key_is_held(.S) {
-			velocity.y += 1
+			input.y += 1
 		}
 
 		if k2.key_is_held(.D) {
-			velocity.x += 1
+			input.x += 1
 		}
 
 		if k2.key_is_held(.A) {
-			velocity.x -= 1
+			input.x -= 1
 		}
 
-		if linalg.length2(velocity) > 1 {
-			velocity = linalg.normalize(velocity)
+		if linalg.length2(input) > 1 {
+			input = linalg.normalize(input)
 		}
 
-		next_pos := game_state.player_pos + velocity * MOVE_SPEED * delta_time
+		next_position := game_state.player_pos
+		next_position.position_inside_tile += input * MOVE_SPEED * delta_time
+		next_position = recalculate_position_data(&world, next_position)
 
-		center_pos := Raw_Position_Data {
-			world_position = next_pos,
-			tilemap_pos    = game_state.player_tilemap_pos,
-		}
+		left := next_position
+		left.position_inside_tile.x -= player_width * 0.5
+		left = recalculate_position_data(&world, left)
 
-		left := center_pos
-		left.world_position.x -= player_width * 0.5
-		right := center_pos
-		right.world_position.x += player_width * 0.5
+		right := next_position
+		right.position_inside_tile.x += player_width * 0.5
+		right = recalculate_position_data(&world, right)
 
-		if is_tilemap_world_position_empty(&world, center_pos) &&
+		if is_tilemap_world_position_empty(&world, next_position) &&
 		   is_tilemap_world_position_empty(&world, left) &&
 		   is_tilemap_world_position_empty(&world, right) {
 
-			new_pos_data := get_position_data(&world, center_pos)
-
-			game_state.player_tilemap_pos = new_pos_data.tilemap_pos
-			game_state.player_pos = {
-				world.offset_x +
-				world.tile_width * f32(new_pos_data.tile_pos.x) +
-				new_pos_data.position_inside_tile.x,
-				world.offset_y +
-				world.tile_height * f32(new_pos_data.tile_pos.y) +
-				new_pos_data.position_inside_tile.y,
-			}
+			game_state.player_pos = next_position
 		}
 
 		// DRAW
@@ -150,8 +139,8 @@ main :: proc() {
 			for x in 0 ..< world.tilemap_dimension.x {
 				tilemap, ok := get_tilemap(
 					&world,
-					game_state.player_tilemap_pos.x,
-					game_state.player_tilemap_pos.y,
+					game_state.player_pos.tilemap_pos.x,
+					game_state.player_pos.tilemap_pos.y,
 				)
 
 				tile := get_tile_value_unchecked(&world, tilemap, x, y)
@@ -164,30 +153,87 @@ main :: proc() {
 					color = k2.WHITE
 				}
 
-				position := k2.Vec2{f32(x) * world.tile_width, f32(y) * world.tile_height}
+				position := k2.Vec2 {
+					f32(x) * f32(world.tile_size_per_pixel),
+					f32(y) * f32(world.tile_size_per_pixel),
+				}
 
 				tile_rect := k2.Rect {
 					world.offset_x + position.x,
 					world.offset_y + position.y,
-					world.tile_width,
-					world.tile_height,
+					f32(world.tile_size_per_pixel),
+					f32(world.tile_size_per_pixel),
 				}
 
+				if DEBUG {
+					if game_state.player_pos.tile_pos.x == x &&
+					   game_state.player_pos.tile_pos.y == y {
+						color = k2.color_alpha(k2.WHITE, 127)
+					}
+				}
 				k2.draw_rect(tile_rect, color)
-				// k2.draw_rect_outline(tile_rect, 2, color)
+
+				if DEBUG {
+					k2.draw_rect_outline(tile_rect, 2, k2.GREEN)
+				}
 			}
 		}
 
+		x_pos :=
+			world.offset_x +
+			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.x) +
+			game_state.player_pos.position_inside_tile.x * world.meters_to_pixels
+
+		y_pos :=
+			world.offset_y +
+			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.y) +
+			game_state.player_pos.position_inside_tile.y * world.meters_to_pixels
+
 		player_rect: k2.Rect = {
-			game_state.player_pos.x,
-			game_state.player_pos.y,
-			player_width,
-			player_height,
+			x = x_pos,
+			y = y_pos,
+			w = player_width * world.meters_to_pixels,
+			h = player_height * world.meters_to_pixels,
 		}
 
-		k2.draw_rect(player_rect, k2.GREEN, {player_rect.w / 2, world.tile_height})
+		k2.draw_rect(player_rect, k2.YELLOW, {player_rect.w / 2, f32(world.tile_size_per_pixel)})
 
-		k2.draw_text(fmt.tprintf("FPS: %.0f", fps_smoothed), {10, 10}, 24.0, k2.GREEN)
+		if DEBUG {
+			k2.draw_circle_outline({player_rect.x, player_rect.y}, 4.0, 2.0, k2.RED)
+			k2.draw_circle_outline(
+				{player_rect.x + player_width * world.meters_to_pixels * 0.5, player_rect.y},
+				3.0,
+				2.0,
+				k2.BLUE,
+			)
+			k2.draw_circle_outline(
+				{player_rect.x - player_width * world.meters_to_pixels * 0.5, player_rect.y},
+				3.0,
+				2.0,
+				k2.BLUE,
+			)
+
+			k2.draw_text(fmt.tprintf("FPS: %.0f", fps_smoothed), {10, 10}, 24.0, k2.RED)
+			k2.draw_text(
+				fmt.tprint("Tilemap: ", game_state.player_pos.tilemap_pos),
+				{10, 40},
+				24.0,
+				k2.RED,
+			)
+			k2.draw_text(
+				fmt.tprint("Tile: ", game_state.player_pos.tile_pos),
+				{10, 70},
+				24.0,
+				k2.RED,
+			)
+			k2.draw_text(
+				fmt.tprint("Local Position: ", game_state.player_pos.position_inside_tile),
+				{10, 100},
+				24.0,
+				k2.RED,
+			)
+		}
+
 		k2.present()
 	}
 
@@ -210,12 +256,10 @@ is_tilemap_position_empty :: proc(world: ^World, tilemap: ^Tilemap, tile_pos: Ve
 	return is_valid_move
 }
 
-is_tilemap_world_position_empty :: proc(world: ^World, raw_position: Raw_Position_Data) -> bool {
+is_tilemap_world_position_empty :: proc(world: ^World, position_data: Position_Data) -> bool {
 	empty := false
 
-	position_data := get_position_data(world, raw_position)
 	tilemap, ok := get_tilemap(world, position_data.tilemap_pos.x, position_data.tilemap_pos.y)
-
 	if !ok do return empty
 
 	empty = is_tilemap_position_empty(world, tilemap, position_data.tile_pos)
@@ -223,48 +267,56 @@ is_tilemap_world_position_empty :: proc(world: ^World, raw_position: Raw_Positio
 	return empty
 }
 
-get_position_data :: proc(world: ^World, raw_position_data: Raw_Position_Data) -> Position_Data {
+recalculate_position_data :: proc(world: ^World, position_data: Position_Data) -> Position_Data {
+	result: Position_Data = position_data
 
-	position_data: Position_Data
-	position_data.tilemap_pos = raw_position_data.tilemap_pos
+	recalculate_coordinate(
+		world,
+		world.tilemap_dimension.x,
+		&result.tilemap_pos.x,
+		&result.tile_pos.x,
+		&result.position_inside_tile.x,
+	)
 
-	// world pos relative to the tilemap itself (upper left corner minus the offset)
-	world_position_x := raw_position_data.world_position.x - world.offset_x
-	world_position_y := raw_position_data.world_position.y - world.offset_y
+	recalculate_coordinate(
+		world,
+		world.tilemap_dimension.y,
+		&result.tilemap_pos.y,
+		&result.tile_pos.y,
+		&result.position_inside_tile.y,
+	)
 
-	// tile (cell) position inside the tilemap
-	position_data.tile_pos = [2]i32 {
-		i32(linalg.floor(world_position_x / world.tile_width)),
-		i32(linalg.floor(world_position_y / world.tile_height)),
+	return result
+}
+
+recalculate_coordinate :: proc(
+	world: ^World,
+	tilemap_dimension: i32,
+	tilemap_pos: ^i32,
+	tile_pos: ^i32,
+	position_in_tile: ^f32,
+) {
+	// figure out how much our position could be offset from the "base" tile that we stood on
+	offset: i32 = i32(linalg.floor(position_in_tile^ / f32(world.tile_size_per_meter)))
+	// offset that tile position
+	tile_pos^ += offset
+	// recalculate the position inside the new tile, to make sure it still sits within the tile size boundary
+	position_in_tile^ -= f32(offset) * f32(world.tile_size_per_meter)
+
+	assert(position_in_tile^ >= 0)
+	assert(position_in_tile^ < f32(world.tile_size_per_meter))
+
+	// offset the tilemap itself, if we step outside the lower boundaries of it
+	if tile_pos^ < 0 {
+		tile_pos^ = tilemap_dimension + tile_pos^
+		tilemap_pos^ -= 1
 	}
 
-	// actual position offset from the top left corner of the tile (cell) itself
-	position_data.position_inside_tile = {
-		world_position_x - f32(position_data.tile_pos.x) * world.tile_width,
-		world_position_y - f32(position_data.tile_pos.y) * world.tile_height,
+	// offset the tilemap itself, if we step outside the upper boundaries of it
+	if tile_pos^ >= tilemap_dimension {
+		tile_pos^ = tile_pos^ - tilemap_dimension
+		tilemap_pos^ += 1
 	}
-
-	if position_data.tile_pos.x < 0 {
-		position_data.tile_pos.x = world.tilemap_dimension.x + position_data.tile_pos.x
-		position_data.tilemap_pos.x -= 1
-	}
-
-	if position_data.tile_pos.y < 0 {
-		position_data.tile_pos.y = world.tilemap_dimension.y + position_data.tile_pos.y
-		position_data.tilemap_pos.y -= 1
-	}
-
-	if position_data.tile_pos.x >= world.tilemap_dimension.x {
-		position_data.tile_pos.x = position_data.tile_pos.x - world.tilemap_dimension.x
-		position_data.tilemap_pos.x += 1
-	}
-
-	if position_data.tile_pos.y >= world.tilemap_dimension.y {
-		position_data.tile_pos.y = position_data.tile_pos.y - world.tilemap_dimension.y
-		position_data.tilemap_pos.y += 1
-	}
-
-	return position_data
 }
 
 get_tile_value_unchecked :: proc(world: ^World, tilemap: ^Tilemap, x, y: i32) -> i32 {
