@@ -16,8 +16,8 @@ World :: struct {
 	tile_size_per_meter: f32,
 	tile_size_per_pixel: i32, // real world unit
 	meters_to_pixels:    f32,
-	offset_x:            f32, // todo: convert to vec2i
-	offset_y:            f32, // todo: convert to vec2i
+	offset_x_in_pixels:  f32, // todo: convert to vec2i
+	offset_y_in_pixels:  f32, // todo: convert to vec2i
 	tilemaps:            ^[WORLD_DIMENSION.x][WORLD_DIMENSION.y]Tilemap,
 }
 
@@ -28,7 +28,7 @@ Tilemap :: struct {
 Position_Data :: struct {
 	tilemap_pos:          Vec2i, // tilemap grid position (which tilemap are we on)
 	tile_pos:             Vec2i, // tile (cell) position
-	position_inside_tile: k2.Vec2, // relative to upper left corner of tile in pixels
+	position_inside_tile: k2.Vec2, // relative to bottom left corner of tile (in meters)
 
 	// Packed tilepositions - low bits are for the tile index, and high bits are for the tile page/chunk
 	_tile_pos:            Vec2u,
@@ -59,8 +59,10 @@ main :: proc() {
 		tilemaps            = &tilemaps,
 	}
 
-	world.offset_x = f32(world.tile_size_per_pixel) * 0.5
-	world.offset_y = f32(world.tile_size_per_pixel) * 0.5
+	world.offset_x_in_pixels = f32(world.tile_size_per_pixel) * 0.5
+	world.offset_y_in_pixels =
+		f32(world.tile_size_per_pixel * world.tilemap_dimension.y) +
+		f32(world.tile_size_per_pixel) * 0.5
 	world.meters_to_pixels = f32(world.tile_size_per_pixel) / f32(world.tile_size_per_meter)
 
 	tilemaps[0][0].tiles = TILES_00
@@ -76,7 +78,7 @@ main :: proc() {
 	}
 
 	game_state = {
-		player_pos = {tilemap_pos = {0, 0}, tile_pos = {4, 4}, position_inside_tile = {5.0, 5.0}},
+		player_pos = {tilemap_pos = {0, 0}, tile_pos = {1, 1}, position_inside_tile = {1.0, 1.0}},
 	}
 
 	player_height: f32 = 1.4
@@ -94,11 +96,11 @@ main :: proc() {
 		input: k2.Vec2 = {}
 
 		if k2.key_is_held(.W) {
-			input.y -= 1
+			input.y += 1
 		}
 
 		if k2.key_is_held(.S) {
-			input.y += 1
+			input.y -= 1
 		}
 
 		if k2.key_is_held(.D) {
@@ -115,20 +117,19 @@ main :: proc() {
 
 		next_position := game_state.player_pos
 		next_position.position_inside_tile += input * MOVE_SPEED * delta_time
-		next_position = recalculate_position_data(&world, next_position)
+		next_position = calculate_position_data(&world, next_position)
 
 		left := next_position
 		left.position_inside_tile.x -= player_width * 0.5
-		left = recalculate_position_data(&world, left)
+		left = calculate_position_data(&world, left)
 
 		right := next_position
 		right.position_inside_tile.x += player_width * 0.5
-		right = recalculate_position_data(&world, right)
+		right = calculate_position_data(&world, right)
 
 		if is_tilemap_world_position_empty(&world, next_position) &&
 		   is_tilemap_world_position_empty(&world, left) &&
 		   is_tilemap_world_position_empty(&world, right) {
-
 			game_state.player_pos = next_position
 		}
 
@@ -159,8 +160,8 @@ main :: proc() {
 				}
 
 				tile_rect := k2.Rect {
-					world.offset_x + position.x,
-					world.offset_y + position.y,
+					world.offset_x_in_pixels + position.x,
+					world.offset_y_in_pixels - position.y,
 					f32(world.tile_size_per_pixel),
 					f32(world.tile_size_per_pixel),
 				}
@@ -171,22 +172,24 @@ main :: proc() {
 						color = k2.color_alpha(k2.WHITE, 127)
 					}
 				}
-				k2.draw_rect(tile_rect, color)
+				k2.draw_rect(tile_rect, color, origin = {0, f32(world.tile_size_per_pixel)})
 
 				if DEBUG {
+					// you cannot set origin from "draw_rect_outline" -> manually adjust it here
+					tile_rect.y -= f32(world.tile_size_per_pixel)
 					k2.draw_rect_outline(tile_rect, 2, k2.GREEN)
 				}
 			}
 		}
 
 		x_pos :=
-			world.offset_x +
+			world.offset_x_in_pixels +
 			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.x) +
 			game_state.player_pos.position_inside_tile.x * world.meters_to_pixels
 
 		y_pos :=
-			world.offset_y +
-			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.y) +
+			world.offset_y_in_pixels -
+			f32(world.tile_size_per_pixel) * f32(game_state.player_pos.tile_pos.y) -
 			game_state.player_pos.position_inside_tile.y * world.meters_to_pixels
 
 		player_rect: k2.Rect = {
@@ -196,7 +199,11 @@ main :: proc() {
 			h = player_height * world.meters_to_pixels,
 		}
 
-		k2.draw_rect(player_rect, k2.YELLOW, {player_rect.w / 2, f32(world.tile_size_per_pixel)})
+		k2.draw_rect(
+			player_rect,
+			k2.YELLOW,
+			origin = {player_rect.w / 2, f32(world.tile_size_per_pixel)},
+		)
 
 		if DEBUG {
 			k2.draw_circle_outline({player_rect.x, player_rect.y}, 4.0, 2.0, k2.RED)
@@ -267,7 +274,7 @@ is_tilemap_world_position_empty :: proc(world: ^World, position_data: Position_D
 	return empty
 }
 
-recalculate_position_data :: proc(world: ^World, position_data: Position_Data) -> Position_Data {
+calculate_position_data :: proc(world: ^World, position_data: Position_Data) -> Position_Data {
 	result: Position_Data = position_data
 
 	recalculate_coordinate(
