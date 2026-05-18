@@ -1,4 +1,4 @@
-package main
+package game
 
 import k2 "../../SDKs/karl2d"
 import "core:fmt"
@@ -8,7 +8,25 @@ import "core:mem"
 Vec2i :: [2]i32
 Vec2u :: [2]u32
 
+kilobytes :: proc(value: $T) -> T {
+	return value * 1024
+}
+
+megabytes :: proc(value: $T) -> T {
+	return kilobytes(value) * 1024
+}
+
+gigabytes :: proc(value: $T) -> T {
+	return megabytes(value) * 1024
+}
+
+terabytes :: proc(value: $T) -> T {
+	return gigabytes(value) * 1024
+}
+
 Game_State :: struct {
+	world_arena:             Memory_Arena,
+	world:                   ^World,
 	player_tilemap_position: Tilemap_Position,
 }
 
@@ -16,22 +34,53 @@ World :: struct {
 	tilemap: ^Tilemap,
 }
 
+Memory :: struct {
+	is_initialized:         bool,
+	total_size:             u64,
+	game_memory_block:      []byte,
+	permanent_storage_size: u64,
+	transient_storage_size: u64,
+	permanent_storage:      []byte,
+	transient_storage:      []byte,
+}
+
+Memory_Arena :: struct {
+	base: []u8,
+	used: u64,
+	size: u64,
+}
+
 DEBUG :: true
 MOVE_SPEED :: 6.0 // meters/s
 CHUNK_DIMENSION :: 256
-CHUNK_COUNT_X :: 17
-CHUNK_COUNT_Y :: 9
+TILES_COUNT_X :: 17
+TILES_COUNT_Y :: 9
 
 game_state: Game_State
-world: World
-tilemap: Tilemap
-tile_chunks: []Tile_Chunk
 fps_smoothed: f32 = 60
 
 main :: proc() {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, context.allocator)
 	context.allocator = mem.tracking_allocator(&track)
+	defer {
+		if len(track.allocation_map) > 0 {
+			fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+			for _, entry in track.allocation_map {
+				fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+			}
+		}
+		mem.tracking_allocator_destroy(&track)
+	}
+
+	memory := Memory{}
+	memory.permanent_storage_size = megabytes(u64(64))
+	memory.transient_storage_size = gigabytes(u64(1))
+	memory.total_size = memory.permanent_storage_size + memory.transient_storage_size
+	memory.game_memory_block = make([]byte, memory.total_size)
+	memory.permanent_storage = memory.game_memory_block[:memory.permanent_storage_size]
+	memory.transient_storage = memory.game_memory_block[memory.permanent_storage_size:]
+	// defer delete(memory.game_memory_block)
 
 	k2.init(
 		940,
@@ -40,20 +89,50 @@ main :: proc() {
 		options = {window_mode = .Windowed, anti_alias = true, disable_auto_scale_hint = true},
 	)
 
-	tiles := make([]u32, CHUNK_DIMENSION * CHUNK_DIMENSION)
-	for row, y in test_tiles {
-		for column, x in row {
-			index := index_2d_to_1d(u32(x), u32(y), u32(CHUNK_DIMENSION))
-			tiles[index] = column
+	player_height: f32 = 1.4
+	player_width: f32 = player_height * 0.75
+
+	// tiles := make([]u32, CHUNK_DIMENSION * CHUNK_DIMENSION)
+	// for row, y in test_tiles {
+	// 	for column, x in row {
+	// 		index := index_2d_to_1d(u32(x), u32(y), u32(CHUNK_DIMENSION))
+	// 		tiles[index] = column
+	// 	}
+	// }
+
+	// tile_chunks: []Tile_Chunk = {Tile_Chunk{tiles = tiles}}
+
+	game_state = {
+		player_tilemap_position = {tile_absolute_pos = {3, 3}, tile_relative_pos = {0.0, 0.0}},
+	}
+
+	initialize_arena(
+		&game_state.world_arena,
+		memory.permanent_storage_size - size_of(Game_State),
+		memory.permanent_storage[size_of(Game_State):],
+	)
+
+	// allocate world
+	game_state.world = push_struct(&game_state.world_arena, World)
+	world := game_state.world
+	world.tilemap = push_struct(&game_state.world_arena, Tilemap)
+
+	// tilemap := Tilemap{}
+	// world.tilemap = &tilemap
+
+	tilemap := world.tilemap
+	tilemap.chunk_dimension = CHUNK_DIMENSION
+	tilemap.chunk_count = {16, 16}
+	chunks: [dynamic]Tile_Chunk
+
+	for y in 0 ..< tilemap.chunk_count.y {
+		for x in 0 ..< tilemap.chunk_count.x {
+			// index := index_2d_to_1d(u32(x), u32(y), tilemap.chunk_count.x)
+			append(&chunks, Tile_Chunk{})
 		}
 	}
 
-	tile_chunks = {Tile_Chunk{tiles = tiles}}
-
-	tilemap = {}
-	tilemap.chunk_dimension = CHUNK_DIMENSION
-	tilemap.chunk_count = {1, 1}
-	tilemap.tile_chunks = &tile_chunks
+	tilemap.tile_chunks = &chunks
 	tilemap.tile_size_in_meters = 1.4
 	tilemap.tile_size_per_pixel = 50
 	tilemap.chunk_shift = 8 // 256 x 256 tile chunks
@@ -61,21 +140,28 @@ main :: proc() {
 	tilemap.chunk_mask = tilemap.chunk_mask - 1
 	tilemap.meters_to_pixels = f32(tilemap.tile_size_per_pixel) / f32(tilemap.tile_size_in_meters)
 
-	world = {
-		tilemap = &tilemap,
+	for screen_y in 0 ..< 32 {
+		for screen_x in 0 ..< 32 {
+			screen_coordinate := Vec2u{u32(screen_x), u32(screen_y)}
+
+			for tile_y in 0 ..< TILES_COUNT_Y {
+				for tile_x in 0 ..< TILES_COUNT_X {
+					tile_coordinate := Vec2u{u32(tile_x), u32(tile_y)}
+					absolute_tile_pos := Vec2u {
+						screen_coordinate.x * TILES_COUNT_X + tile_coordinate.x,
+						screen_coordinate.y * TILES_COUNT_Y + tile_coordinate.y,
+					}
+
+					set_tile_value(&game_state.world_arena, world.tilemap, absolute_tile_pos, 0)
+				}
+			}
+		}
 	}
 
 	offset_x_in_pixels := f32(tilemap.tile_size_per_pixel) * 0.5
 	offset_y_in_pixels :=
-		f32(u32(tilemap.tile_size_per_pixel) * CHUNK_COUNT_Y) +
+		f32(u32(tilemap.tile_size_per_pixel) * TILES_COUNT_X) +
 		f32(tilemap.tile_size_per_pixel) * 0.5
-
-	game_state = {
-		player_tilemap_position = {tile_absolute_pos = {3, 3}, tile_relative_pos = {0.0, 0.0}},
-	}
-
-	player_height: f32 = 1.4
-	player_width: f32 = player_height * 0.75
 
 	for k2.update() {
 		if k2.key_went_down(.Escape) do break
@@ -110,19 +196,19 @@ main :: proc() {
 
 		next_position := game_state.player_tilemap_position
 		next_position.tile_relative_pos += input * MOVE_SPEED * delta_time
-		next_position = calculate_position_data(&tilemap, next_position)
+		next_position = calculate_position_data(world.tilemap, next_position)
 
 		left := next_position
 		left.tile_relative_pos.x -= player_width * 0.5
-		left = calculate_position_data(&tilemap, left)
+		left = calculate_position_data(world.tilemap, left)
 
 		right := next_position
 		right.tile_relative_pos.x += player_width * 0.5
-		right = calculate_position_data(&tilemap, right)
+		right = calculate_position_data(world.tilemap, right)
 
-		if is_position_empty(&tilemap, next_position) &&
-		   is_position_empty(&tilemap, left) &&
-		   is_position_empty(&tilemap, right) {
+		if is_position_empty(world.tilemap, next_position) &&
+		   is_position_empty(world.tilemap, left) &&
+		   is_position_empty(world.tilemap, right) {
 			game_state.player_tilemap_position = next_position
 		}
 
@@ -140,7 +226,7 @@ main :: proc() {
 					u32(x) + game_state.player_tilemap_position.tile_absolute_pos.x,
 					u32(y) + game_state.player_tilemap_position.tile_absolute_pos.y,
 				}
-				tile := get_tile_value(&tilemap, coordinate)
+				tile := get_tile_value(world.tilemap, coordinate)
 
 				color: k2.Color
 				switch tile {
@@ -226,7 +312,7 @@ main :: proc() {
 			k2.draw_text(fmt.tprintf("FPS: %.0f", fps_smoothed), {10, 10}, 24.0, k2.RED)
 
 			chunk_pos := get_chunk_position(
-				&tilemap,
+				world.tilemap,
 				game_state.player_tilemap_position.tile_absolute_pos,
 			)
 			k2.draw_text(
@@ -265,18 +351,26 @@ main :: proc() {
 		free_all(context.temp_allocator)
 	}
 
-	delete(tiles)
 	k2.shutdown()
-
-	if len(track.allocation_map) > 0 {
-		fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
-		for _, entry in track.allocation_map {
-			fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
-		}
-	}
-	mem.tracking_allocator_destroy(&track)
 }
 
 index_2d_to_1d :: proc(x, y, dimension: u32) -> u32 {
 	return y * dimension + x
+}
+
+initialize_arena :: proc(arena: ^Memory_Arena, size: u64, base: []u8) {
+	arena.size = size
+	arena.base = base
+	arena.used = 0
+}
+
+push_struct :: proc(arena: ^Memory_Arena, $T: typeid) -> ^T {
+	return (^T)(push_struct_(arena, size_of(T)))
+}
+
+push_struct_ :: proc(arena: ^Memory_Arena, size: u64) -> rawptr {
+	result := arena.base[arena.used:]
+	arena.used += size
+
+	return raw_data(result)
 }

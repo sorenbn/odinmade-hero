@@ -1,4 +1,4 @@
-package main
+package game
 
 import k2 "../../SDKs/karl2d"
 import "core:math/linalg"
@@ -11,7 +11,7 @@ Tilemap :: struct {
 	meters_to_pixels:    f32,
 	chunk_shift:         u32,
 	chunk_mask:          u32,
-	tile_chunks:         ^[]Tile_Chunk,
+	tile_chunks:         ^[dynamic]Tile_Chunk,
 }
 
 Tile_Chunk :: struct {
@@ -124,4 +124,44 @@ recalculate_coordinate :: proc(tilemap: ^Tilemap, tile_pos: ^u32, position_in_ti
 
 	assert(position_in_tile^ >= -0.5 * tilemap.tile_size_in_meters)
 	assert(position_in_tile^ <= 0.5 * tilemap.tile_size_in_meters)
+}
+
+set_tile_value :: proc(
+	arena: ^Memory_Arena,
+	tilemap: ^Tilemap,
+	absolute_tile_pos: [2]u32,
+	value: u32,
+) {
+	chunk_pos := get_chunk_position(tilemap, absolute_tile_pos)
+	chunk, ok := get_chunk(
+		tilemap,
+		chunk_pos.chunk_absolute_position.x,
+		chunk_pos.chunk_absolute_position.y,
+	)
+
+	// todo: replace with "ok" return value
+	assert(chunk != nil)
+
+	set_tile_value_on_chunk(
+		tilemap,
+		chunk,
+		chunk_pos.chunk_relative_tile_pos.x,
+		chunk_pos.chunk_relative_tile_pos.y,
+		value,
+	)
+}
+
+set_tile_value_on_chunk :: proc(tilemap: ^Tilemap, chunk: ^Tile_Chunk, x, y: u32, value: u32) {
+	if chunk != nil {
+		set_tile_value_unchecked(tilemap, chunk, x, y, value)
+	}
+}
+
+set_tile_value_unchecked :: proc(tilemap: ^Tilemap, chunk: ^Tile_Chunk, x, y: u32, value: u32) {
+	assert(chunk != nil)
+	assert(x < tilemap.chunk_dimension)
+	assert(y < tilemap.chunk_dimension)
+
+	index := index_2d_to_1d(x, y, tilemap.chunk_dimension)
+	chunk.tiles[index] = value
 }
