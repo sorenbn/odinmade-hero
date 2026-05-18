@@ -3,6 +3,7 @@ package main
 import k2 "../../SDKs/karl2d"
 import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 
 Vec2i :: [2]i32
 Vec2u :: [2]u32
@@ -34,11 +35,11 @@ Position_Data :: struct {
 }
 
 Tile_Chunk_Position :: struct {
-	tile_chunk_pos:          Vec2u,
+	chunk_absolute_position: Vec2u, // the absolute chunk position
 	chunk_relative_tile_pos: Vec2u, // relative position inside chunk
 }
 
-DEBUG :: false
+DEBUG :: true
 MOVE_SPEED :: 6.0 // meters/s
 CHUNK_DIMENSION :: 256
 CHUNK_COUNT_X :: 17
@@ -50,6 +51,10 @@ tile_chunks: []Tile_Chunk
 fps_smoothed: f32 = 60
 
 main :: proc() {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	context.allocator = mem.tracking_allocator(&track)
+
 	k2.init(
 		940,
 		540,
@@ -164,9 +169,19 @@ main :: proc() {
 					f32(y) * f32(world.tile_size_per_pixel),
 				}
 
+				// scrolling the world instead of the player rect
+				scrolled_position := k2.Vec2 {
+					center.x +
+					position.x -
+					world.meters_to_pixels * game_state.player_pos.tile_relative_pos.x,
+					center.y -
+					position.y +
+					world.meters_to_pixels * game_state.player_pos.tile_relative_pos.y,
+				}
+
 				tile_rect := k2.Rect {
-					center.x + position.x,
-					center.y - position.y,
+					scrolled_position.x,
+					scrolled_position.y,
 					f32(world.tile_size_per_pixel),
 					f32(world.tile_size_per_pixel),
 				}
@@ -187,8 +202,8 @@ main :: proc() {
 			}
 		}
 
-		x_pos := center.x + world.meters_to_pixels * game_state.player_pos.tile_relative_pos.x
-		y_pos := center.y - world.meters_to_pixels * game_state.player_pos.tile_relative_pos.y
+		x_pos := center.x
+		y_pos := center.y
 
 		player_rect: k2.Rect = {
 			x = x_pos,
@@ -204,6 +219,7 @@ main :: proc() {
 		)
 
 		if DEBUG {
+
 			k2.draw_circle_outline({player_rect.x, player_rect.y}, 4.0, 2.0, k2.RED)
 			k2.draw_circle_outline(
 				{player_rect.x + player_width * world.meters_to_pixels * 0.5, player_rect.y},
@@ -219,30 +235,48 @@ main :: proc() {
 			)
 
 			k2.draw_text(fmt.tprintf("FPS: %.0f", fps_smoothed), {10, 10}, 24.0, k2.RED)
+
+			chunk_pos := get_chunk_position(&world, game_state.player_pos.tile_absolute_pos)
 			k2.draw_text(
-				fmt.tprint("Tilemap: ", game_state.player_pos.tile_absolute_pos),
+				fmt.tprint("Absolute Tile: ", game_state.player_pos.tile_absolute_pos),
 				{10, 40},
 				24.0,
 				k2.RED,
 			)
 			k2.draw_text(
-				fmt.tprint("Tile: ", game_state.player_pos.tile_absolute_pos),
+				fmt.tprint("Chunk: ", chunk_pos.chunk_absolute_position),
 				{10, 70},
 				24.0,
 				k2.RED,
 			)
 			k2.draw_text(
-				fmt.tprint("Local Position: ", game_state.player_pos.tile_relative_pos),
+				fmt.tprint("Chunk Local Position: ", chunk_pos.chunk_relative_tile_pos),
 				{10, 100},
+				24.0,
+				k2.RED,
+			)
+			k2.draw_text(
+				fmt.tprint("Local Position: ", game_state.player_pos.tile_relative_pos),
+				{10, 130},
 				24.0,
 				k2.RED,
 			)
 		}
 
 		k2.present()
+		free_all(context.temp_allocator)
 	}
 
+	delete(tiles)
 	k2.shutdown()
+
+	if len(track.allocation_map) > 0 {
+		fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+		for _, entry in track.allocation_map {
+			fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+		}
+	}
+	mem.tracking_allocator_destroy(&track)
 }
 
 is_position_empty :: proc(world: ^World, position_data: Position_Data) -> bool {
@@ -252,29 +286,12 @@ is_position_empty :: proc(world: ^World, position_data: Position_Data) -> bool {
 	return empty
 }
 
-get_chunk_position :: proc(world: ^World, absolute_tile_pos: [2]u32) -> Tile_Chunk_Position {
-	result: Tile_Chunk_Position = {
-		// shave off the first 8 bits, and only get read the remaining 24 bits
-		tile_chunk_pos          = {
-			absolute_tile_pos.x >> world.chunk_shift,
-			absolute_tile_pos.y >> world.chunk_shift,
-		},
-		// shave off the 24 bits thats storing the chunk pos, and only care about the remaining bits to tell relative tile pos
-		chunk_relative_tile_pos = {
-			absolute_tile_pos.x & world.chunk_mask,
-			absolute_tile_pos.y & world.chunk_mask,
-		},
-	}
-
-	return result
-}
-
 get_tile_value :: proc(world: ^World, absolute_tile_pos: [2]u32) -> u32 {
 	tile_chunk_pos := get_chunk_position(world, absolute_tile_pos)
 	tile_chunk, ok := get_chunk(
 		world,
-		tile_chunk_pos.tile_chunk_pos.x,
-		tile_chunk_pos.tile_chunk_pos.y,
+		tile_chunk_pos.chunk_absolute_position.x,
+		tile_chunk_pos.chunk_absolute_position.y,
 	)
 
 	tile_value: u32 = get_tile_value_from_chunk(
@@ -336,6 +353,23 @@ get_chunk :: proc(world: ^World, x, y: u32) -> (^Tile_Chunk, bool) {
 	}
 
 	return nil, false
+}
+
+get_chunk_position :: proc(world: ^World, absolute_tile_pos: [2]u32) -> Tile_Chunk_Position {
+	result: Tile_Chunk_Position = {
+		// shave off the first 8 bits, and only get read the remaining 24 bits
+		chunk_absolute_position = {
+			absolute_tile_pos.x >> world.chunk_shift,
+			absolute_tile_pos.y >> world.chunk_shift,
+		},
+		// shave off the 24 bits thats storing the chunk pos, and only care about the remaining bits to tell local tile pos of the chunk
+		chunk_relative_tile_pos = {
+			absolute_tile_pos.x & world.chunk_mask,
+			absolute_tile_pos.y & world.chunk_mask,
+		},
+	}
+
+	return result
 }
 
 index_2d_to_1d :: proc(x, y, dimension: u32) -> u32 {
