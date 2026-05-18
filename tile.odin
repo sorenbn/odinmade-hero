@@ -4,14 +4,14 @@ import k2 "../../SDKs/karl2d"
 import "core:math/linalg"
 
 Tilemap :: struct {
-	chunk_dimension:     u32, // size of the chunk itself - 256
-	chunk_count:         Vec2u, // amount of actual "tilemaps" / chunks
+	chunk_count:         Vec2u, // amount of actual chunks
+	chunk_dimension:     u32, // amount of tiles inside a chunk - 256
 	tile_size_in_meters: f32,
 	tile_size_per_pixel: i32, // real world unit
 	meters_to_pixels:    f32,
 	chunk_shift:         u32,
 	chunk_mask:          u32,
-	tile_chunks:         ^[dynamic]Tile_Chunk,
+	tile_chunks:         []Tile_Chunk,
 }
 
 Tile_Chunk :: struct {
@@ -126,12 +126,7 @@ recalculate_coordinate :: proc(tilemap: ^Tilemap, tile_pos: ^u32, position_in_ti
 	assert(position_in_tile^ <= 0.5 * tilemap.tile_size_in_meters)
 }
 
-set_tile_value :: proc(
-	arena: ^Memory_Arena,
-	tilemap: ^Tilemap,
-	absolute_tile_pos: [2]u32,
-	value: u32,
-) {
+set_tile_value :: proc(tilemap: ^Tilemap, absolute_tile_pos: [2]u32, value: u32) {
 	chunk_pos := get_chunk_position(tilemap, absolute_tile_pos)
 	chunk, ok := get_chunk(
 		tilemap,
