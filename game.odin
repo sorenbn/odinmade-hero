@@ -9,22 +9,6 @@ import "core:mem/virtual"
 Vec2i :: [2]i32
 Vec2u :: [2]u32
 
-kilobytes :: proc(value: $T) -> T {
-	return value * 1024
-}
-
-megabytes :: proc(value: $T) -> T {
-	return kilobytes(value) * 1024
-}
-
-gigabytes :: proc(value: $T) -> T {
-	return megabytes(value) * 1024
-}
-
-terabytes :: proc(value: $T) -> T {
-	return gigabytes(value) * 1024
-}
-
 Game_State :: struct {
 	world_arena:             virtual.Arena,
 	world:                   ^World,
@@ -65,8 +49,8 @@ main :: proc() {
 	player_width: f32 = player_height * 0.75
 
 	memory := Memory{}
-	memory.permanent_storage_size = megabytes(u64(64))
-	memory.transient_storage_size = gigabytes(u64(1))
+	memory.permanent_storage_size = mem.Megabyte * 64
+	memory.transient_storage_size = mem.Gigabyte * 1
 	memory.total_size = memory.permanent_storage_size + memory.transient_storage_size
 	memory.game_memory_block = make([]byte, memory.total_size)
 	// permanent storage takes up the initial chunk of all game memory
